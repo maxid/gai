@@ -27,11 +27,19 @@ go run ./examples/echo
 go get github.com/maxid/gai
 ```
 
+## Providers
+
+| package | API | stream |
+|---|---|---|
+| `openai` | OpenAI chat completions, and every server that copies the wire format (DeepSeek, Qwen, Moonshot, Ollama, vLLM) | ✅ |
+| `anthropic` | Anthropic Messages (`x-api-key`, `anthropic-version`), with the system prompt at the top level and tool calls as content blocks | ✅ |
+
+The two adapters are separate packages, not flags on one: the wire formats diverge where it
+matters (system prompt placement, tool-call shape, tool results as user messages, typed
+streaming events). A vendor that diverges from both gets its own adapter.
+
 ## Planned
 
-- OpenAI-compatible provider adapter (covers OpenAI, DeepSeek, Qwen and
-  compatible gateways).
-- Anthropic provider adapter.
 - Retry, timeout, rate-limit and usage accounting helpers.
 - Structured output helpers.
 

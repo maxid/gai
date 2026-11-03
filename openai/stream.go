@@ -46,60 +46,74 @@ func (s *stream) Recv() (gai.Chunk, error) {
 	}
 
 	for {
-		line, err := s.reader.ReadString('\n')
+		chunk, produced, err := s.recvEvent()
 		if err != nil {
-			if err == io.EOF {
-				if s.done {
-					s.closed = true
-					return gai.Chunk{}, io.EOF
-				}
-				// The server closed without [DONE]: treat accumulated calls as final.
-				return s.finish()
-			}
 			return gai.Chunk{}, err
 		}
-
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" || strings.HasPrefix(line, ":") {
-			continue
+		if produced {
+			return chunk, nil
 		}
-		if !strings.HasPrefix(line, "data:") {
-			// event:, id: and retry: fields carry no content for this API.
-			continue
-		}
-
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "[DONE]" {
-			// [DONE] is where the accumulated tool calls become deliverable: they are
-			// only complete once the stream says it is finished.
-			s.done = true
-			s.flushToolCalls()
-			return s.recvQueued()
-		}
-
-		var event streamEvent
-		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			return gai.Chunk{}, fmt.Errorf("gai/openai: decode stream chunk: %w", err)
-		}
-
-		if len(event.Choices) == 0 {
-			continue
-		}
-		delta := event.Choices[0].Delta
-		for _, call := range delta.ToolCalls {
-			s.accumulate(call)
-		}
-
-		if delta.Content != "" {
-			return gai.Chunk{Delta: delta.Content}, nil
-		}
-		if event.Usage != nil {
-			converted := event.Usage.toUsage()
-			return gai.Chunk{Usage: &converted}, nil
-		}
-		// A tool-call-only delta produces no chunk: the call is not complete yet.
 	}
-	return s.recvQueued()
+}
+
+// recvEvent reads one event and reports whether it produced a chunk. Keeping the loop in Recv
+// and the parsing here is what makes "this event carries nothing for the caller" explicit
+// instead of a bare continue that leaves the function with unreachable code at the end.
+func (s *stream) recvEvent() (gai.Chunk, bool, error) {
+	line, err := s.reader.ReadString('\n')
+	if err != nil {
+		if err == io.EOF {
+			if s.done {
+				s.closed = true
+				return gai.Chunk{}, false, io.EOF
+			}
+			// The server closed without [DONE]: treat accumulated calls as final.
+			chunk, err := s.finish()
+			return chunk, true, err
+		}
+		return gai.Chunk{}, false, err
+	}
+
+	line = strings.TrimRight(line, "\r\n")
+	if line == "" || strings.HasPrefix(line, ":") {
+		return gai.Chunk{}, false, nil
+	}
+	if !strings.HasPrefix(line, "data:") {
+		// event:, id: and retry: fields carry no content for this API.
+		return gai.Chunk{}, false, nil
+	}
+
+	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	if payload == "[DONE]" {
+		// [DONE] is where the accumulated tool calls become deliverable: they are only
+		// complete once the stream says it is finished.
+		s.done = true
+		s.flushToolCalls()
+		chunk, err := s.recvQueued()
+		return chunk, true, err
+	}
+
+	var event streamEvent
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		return gai.Chunk{}, false, fmt.Errorf("gai/openai: decode stream chunk: %w", err)
+	}
+	if len(event.Choices) == 0 {
+		return gai.Chunk{}, false, nil
+	}
+
+	delta := event.Choices[0].Delta
+	for _, call := range delta.ToolCalls {
+		s.accumulate(call)
+	}
+	if delta.Content != "" {
+		return gai.Chunk{Delta: delta.Content}, true, nil
+	}
+	if event.Usage != nil {
+		converted := event.Usage.toUsage()
+		return gai.Chunk{Usage: &converted}, true, nil
+	}
+	// A tool-call-only delta produces no chunk: the call is not complete yet.
+	return gai.Chunk{}, false, nil
 }
 
 // recvQueued returns the next accumulated tool call.

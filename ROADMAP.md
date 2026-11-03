@@ -4,6 +4,6 @@
 - [x] Provider registry and toolset
 - [x] Stream collection
 - [x] OpenAI-compatible adapter (`openai/`: chat, streaming, tool calls)
-- [ ] Anthropic adapter
+- [x] Anthropic adapter (`gai/anthropic`): chat and streaming
 - [ ] Retry, timeout and usage helpers
 - [ ] v1.0 API stabilization
